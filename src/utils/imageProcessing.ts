@@ -1,20 +1,9 @@
-// 颜色量化接口
-export interface ColorPalette {
-  colors: RGB[];
-  symbolMap: Map<string, string>;
-}
+import { MARD_RGB } from '@/data/mardPalette';
 
 export interface RGB {
   r: number;
   g: number;
   b: number;
-}
-
-export interface PixelData {
-  width: number;
-  height: number;
-  pixels: RGB[][];
-  colorPalette: ColorPalette;
 }
 
 // 将图像调整为指定宽高
@@ -57,153 +46,97 @@ export function imageDataToPixels(imageData: ImageData): RGB[][] {
   return pixels;
 }
 
-// 计算两个颜色的欧氏距离
-export function colorDistance(c1: RGB, c2: RGB): number {
-  return Math.sqrt(
-    Math.pow(c1.r - c2.r, 2) +
-    Math.pow(c1.g - c2.g, 2) +
-    Math.pow(c1.b - c2.b, 2)
-  );
-}
-
-// 使用 K-Means 算法进行颜色量化
-export function quantizeColors(pixels: RGB[][], numColors: number): RGB[] {
-  // 提取所有像素颜色
-  const allColors = pixels.flat();
-  
-  // 如果颜色数量大于总颜色数，直接返回所有颜色
-  if (numColors >= allColors.length) {
-    return [...allColors];
-  }
-  
-  // 使用更稳定的初始化方法
-  let centroids: RGB[] = [];
-  
-  // 使用 K-Means++ 初始化方法
-  // 选择第一个中心点
-  centroids.push({ ...allColors[Math.floor(Math.random() * allColors.length)] });
-  
-  // 选择剩余的中心点
-  for (let i = 1; i < numColors; i++) {
-    // 计算每个颜色到最近中心点的距离
-    const distances = allColors.map(color => {
-      let minDist = Infinity;
-      for (const centroid of centroids) {
-        const dist = colorDistance(color, centroid);
-        if (dist < minDist) {
-          minDist = dist;
-        }
-      }
-      return minDist;
-    });
-    
-    // 根据距离概率选择下一个中心点
-    const totalDistance = distances.reduce((sum, dist) => sum + dist, 0);
-    const randomValue = Math.random() * totalDistance;
-    
-    let cumulativeDistance = 0;
-    let nextCentroidIndex = 0;
-    for (let j = 0; j < distances.length; j++) {
-      cumulativeDistance += distances[j];
-      if (randomValue <= cumulativeDistance) {
-        nextCentroidIndex = j;
-        break;
-      }
-    }
-    
-    centroids.push({ ...allColors[nextCentroidIndex] });
-  }
-  
-  // K-Means 迭代
-  const maxIterations = 20;
-  for (let iter = 0; iter < maxIterations; iter++) {
-    // 为每个颜色分配最近的中心点
-    const clusters: RGB[][] = centroids.map(() => []);
-    
-    for (const color of allColors) {
-      let minDist = Infinity;
-      let clusterIdx = 0;
-      
-      for (let i = 0; i < centroids.length; i++) {
-        const dist = colorDistance(color, centroids[i]);
-        if (dist < minDist) {
-          minDist = dist;
-          clusterIdx = i;
-        }
-      }
-      
-      clusters[clusterIdx].push(color);
-    }
-    
-    // 更新中心点
-    const newCentroids: RGB[] = [];
-    for (const cluster of clusters) {
-      if (cluster.length === 0) {
-        // 如果某个聚类为空，随机选择一个颜色作为中心点
-        newCentroids.push({ ...allColors[Math.floor(Math.random() * allColors.length)] });
-        continue;
-      }
-      
-      const sumR = cluster.reduce((sum, c) => sum + c.r, 0);
-      const sumG = cluster.reduce((sum, c) => sum + c.g, 0);
-      const sumB = cluster.reduce((sum, c) => sum + c.b, 0);
-      
-      newCentroids.push({
-        r: Math.round(sumR / cluster.length),
-        g: Math.round(sumG / cluster.length),
-        b: Math.round(sumB / cluster.length),
-      });
-    }
-    
-    // 检查是否收敛
-    let converged = true;
-    for (let i = 0; i < centroids.length; i++) {
-      if (colorDistance(centroids[i], newCentroids[i]) > 1) {
-        converged = false;
-        break;
-      }
-    }
-    
-    centroids = newCentroids;
-    if (converged) break;
-  }
-  
-  return centroids;
-}
-
-// 将像素映射到调色板颜色
-export function mapPixelsToPalette(
+// 将每个像素映射到 MARD 221 色调色板中最近的颜色（欧氏距离，平方比较省 sqrt）。
+// mergeThreshold：颜色颗数少于阈值的，合并到最近邻的"够数"颜色，避免零碎单像素色污染色卡。
+export function mapPixelsToMardPalette(
   pixels: RGB[][],
-  palette: RGB[]
+  mergeThreshold = 5
 ): { pixels: RGB[][]; symbolMap: Map<string, string> } {
-  const symbols = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-  const symbolMap = new Map<string, string>();
-  
-  // 为调色板中的颜色分配符号
-  palette.forEach((color, idx) => {
-    const colorKey = `${color.r},${color.g},${color.b}`;
-    symbolMap.set(colorKey, symbols[idx % symbols.length]);
-  });
-  
-  // 映射每个像素
-  const mappedPixels: RGB[][] = pixels.map(row =>
-    row.map(pixel => {
-      let minDist = Infinity;
-      let closestColor = pixel;
-      
-      for (const paletteColor of palette) {
-        const dist = colorDistance(pixel, paletteColor);
-        if (dist < minDist) {
-          minDist = dist;
-          closestColor = paletteColor;
-        }
+  const h = pixels.length;
+  const w = pixels[0]?.length ?? 0;
+  const N = MARD_RGB.length;
+
+  // 1. 每像素找最近 MARD 色
+  const idxIndex: Int16Array[] = new Array(h);
+  const mapped: RGB[][] = new Array(h);
+  for (let y = 0; y < h; y++) {
+    const row = pixels[y];
+    const mappedRow: RGB[] = new Array(w);
+    const idxRow = new Int16Array(w);
+    for (let x = 0; x < w; x++) {
+      const px = row[x];
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < N; i++) {
+        const c = MARD_RGB[i];
+        const dr = px.r - c.r;
+        const dg = px.g - c.g;
+        const db = px.b - c.b;
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
       }
-      
-      return closestColor;
-    })
-  );
-  
-  return { pixels: mappedPixels, symbolMap };
+      const c = MARD_RGB[bestIdx];
+      mappedRow[x] = { r: c.r, g: c.g, b: c.b };
+      idxRow[x] = bestIdx;
+    }
+    mapped[y] = mappedRow;
+    idxIndex[y] = idxRow;
+  }
+
+  // 2. 统计每个 MARD 色的颗数
+  const counts = new Int32Array(N);
+  for (let y = 0; y < h; y++) {
+    const row = idxIndex[y];
+    for (let x = 0; x < w; x++) counts[row[x]]++;
+  }
+
+  // 3. 颗数 < threshold 的色，重映射到最近邻"够数"色
+  const remap = new Int16Array(N);
+  for (let i = 0; i < N; i++) remap[i] = i;
+  const aboveIdx: number[] = [];
+  for (let i = 0; i < N; i++) if (counts[i] >= mergeThreshold) aboveIdx.push(i);
+
+  if (aboveIdx.length > 0) {
+    for (let i = 0; i < N; i++) {
+      if (counts[i] >= mergeThreshold) continue;
+      const src = MARD_RGB[i];
+      let bestJ = aboveIdx[0];
+      let bestDist = Infinity;
+      for (const j of aboveIdx) {
+        const tgt = MARD_RGB[j];
+        const dr = src.r - tgt.r;
+        const dg = src.g - tgt.g;
+        const db = src.b - tgt.b;
+        const d = dr * dr + dg * dg + db * db;
+        if (d < bestDist) { bestDist = d; bestJ = j; }
+      }
+      remap[i] = bestJ;
+    }
+    for (let y = 0; y < h; y++) {
+      const idxRow = idxIndex[y];
+      const mappedRow = mapped[y];
+      for (let x = 0; x < w; x++) {
+        const newIdx = remap[idxRow[x]];
+        idxRow[x] = newIdx;
+        const c = MARD_RGB[newIdx];
+        mappedRow[x] = { r: c.r, g: c.g, b: c.b };
+      }
+    }
+  }
+
+  // 4. 构建 symbolMap：colorKey "r,g,b" → MARD 色号
+  const symbolMap = new Map<string, string>();
+  for (let y = 0; y < h; y++) {
+    const idxRow = idxIndex[y];
+    const mappedRow = mapped[y];
+    for (let x = 0; x < w; x++) {
+      const c = mappedRow[x];
+      const key = `${c.r},${c.g},${c.b}`;
+      if (!symbolMap.has(key)) symbolMap.set(key, MARD_RGB[idxRow[x]].code);
+    }
+  }
+
+  return { pixels: mapped, symbolMap };
 }
 
 // RGB 转 Hex
@@ -211,4 +144,31 @@ export function rgbToHex(rgb: RGB): string {
   return '#' + [rgb.r, rgb.g, rgb.b]
     .map(x => x.toString(16).padStart(2, '0'))
     .join('');
+}
+
+// 计算每个颜色的拼豆数量及总数
+export function countBeads(pixels: RGB[][]): {
+  colorCounts: Map<string, number>;
+  total: number;
+} {
+  const colorCounts = new Map<string, number>();
+  let total = 0;
+  for (const row of pixels) {
+    for (const px of row) {
+      const key = `${px.r},${px.g},${px.b}`;
+      colorCounts.set(key, (colorCounts.get(key) || 0) + 1);
+      total++;
+    }
+  }
+  return { colorCounts, total };
+}
+
+// 从 data URL 加载为 HTMLImageElement
+export function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
 }

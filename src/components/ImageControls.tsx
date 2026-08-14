@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
-import { Upload, Download, Printer } from 'lucide-react';
+import { Upload, Download, Printer, Sparkles, Grid3x3 } from 'lucide-react';
 
 interface ImageUploaderProps {
   onImageLoad: (image: HTMLImageElement) => void;
@@ -57,17 +57,18 @@ export function ImageUploader({ onImageLoad }: ImageUploaderProps) {
   return (
     <div className="w-full">
       <div
-        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors bg-[#F8F4E9] ${
+        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
           dragActive
-            ? 'border-primary bg-primary/10'
-            : 'border-muted-foreground/25 hover:border-primary/50'
+            ? 'border-primary bg-primary/5'
+            : 'border-muted-foreground/20 hover:border-primary/40'
         }`}
+        style={{ backgroundColor: '#FAF7F0' }}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
         onDrop={handleDrop}
       >
-        <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+        <Upload className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
         <p className="text-sm text-muted-foreground mb-4">
           拖拽图片到此处，或点击上传
         </p>
@@ -150,13 +151,13 @@ export function ParameterControls({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="colorCount" className="text-foreground">颜色数量: {colorCount[0]}</Label>
+        <Label htmlFor="colorCount" className="text-foreground">颜色合并阈值: {colorCount[0]}</Label>
         <div className="flex items-center gap-2">
           <Slider
             id="colorCount"
-            min={4}
-            max={64}
-            step={4}
+            min={1}
+            max={50}
+            step={1}
             value={colorCount}
             onValueChange={setColorCount}
             className="flex-1"
@@ -164,13 +165,13 @@ export function ParameterControls({
           <input
             type="number"
             id="colorCountInput"
-            min={4}
-            max={64}
-            step={4}
+            min={1}
+            max={50}
+            step={1}
             value={colorCount[0]}
             onChange={(e) => {
               const value = parseInt(e.target.value) || 0;
-              if (!isNaN(value) && value >= 4 && value <= 64) {
+              if (!isNaN(value) && value >= 1 && value <= 50) {
                 setColorCount([value]);
               }
             }}
@@ -178,7 +179,7 @@ export function ParameterControls({
           />
         </div>
         <p className="text-xs text-muted-foreground">
-          控制使用的颜色数量，颜色越多细节越丰富
+          像素数少于阈值的颜色会合并到最近邻 MARD 色，避免单像素色污染色卡（调色板为 MARD 221 色固定）
         </p>
       </div>
 
@@ -212,20 +213,54 @@ export function ParameterControls({
 interface ActionButtonsProps {
   onExport: () => void;
   onPrint: () => void;
-  disabled: boolean;
+  onMakeBeads: () => void;
+  onMakeCartoonBeads: () => void;
+  beadLoading?: boolean;
+  cartoonLoading?: boolean;
+  exportDisabled?: boolean;
 }
 
-export function ActionButtons({ onExport, onPrint, disabled }: ActionButtonsProps) {
+export function ActionButtons({
+  onExport,
+  onPrint,
+  onMakeBeads,
+  onMakeCartoonBeads,
+  beadLoading,
+  cartoonLoading,
+  exportDisabled,
+}: ActionButtonsProps) {
   return (
-    <div className="flex gap-2">
-      <Button onClick={onExport} disabled={disabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1">
-        <Download className="mr-2 h-4 w-4" />
-        导出图片
-      </Button>
-      <Button onClick={onPrint} disabled={disabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1">
-        <Printer className="mr-2 h-4 w-4" />
-        打印图纸
-      </Button>
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
+        <Button
+          onClick={onMakeBeads}
+          disabled={beadLoading || cartoonLoading}
+          variant="default"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1"
+        >
+          <Grid3x3 className="mr-2 h-4 w-4" />
+          {beadLoading ? '生成中...' : '转化为拼豆图'}
+        </Button>
+        <Button
+          onClick={onMakeCartoonBeads}
+          disabled={beadLoading || cartoonLoading}
+          variant="default"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1"
+        >
+          <Sparkles className="mr-2 h-4 w-4" />
+          {cartoonLoading ? '生成中...' : 'AI 生成动漫图'}
+        </Button>
+      </div>
+      <div className="flex gap-2">
+        <Button onClick={onExport} disabled={exportDisabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1">
+          <Download className="mr-2 h-4 w-4" />
+          导出图片
+        </Button>
+        <Button onClick={onPrint} disabled={exportDisabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1">
+          <Printer className="mr-2 h-4 w-4" />
+          打印图纸
+        </Button>
+      </div>
     </div>
   );
 }
