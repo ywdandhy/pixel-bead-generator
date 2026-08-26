@@ -82,7 +82,7 @@ export function ImageUploader({ onImageLoad }: ImageUploaderProps) {
         <Button
           type="button"
           variant="default"
-          className="bg-primary hover:bg-primary/90 text-primary-foreground"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground font-pixel text-[10px] tracking-wide"
           onClick={() => fileInputRef.current?.click()}
         >
           选择图片
@@ -101,6 +101,8 @@ interface ParameterControlsProps {
   setShowSymbols: (value: boolean) => void;
   showGridLines: boolean;
   setShowGridLines: (value: boolean) => void;
+  mirror: boolean;
+  setMirror: (value: boolean) => void;
 }
 
 export function ParameterControls({
@@ -112,11 +114,13 @@ export function ParameterControls({
   setShowSymbols,
   showGridLines,
   setShowGridLines,
+  mirror,
+  setMirror,
 }: ParameterControlsProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <Label htmlFor="gridSize" className="text-foreground">
+        <Label htmlFor="gridSize" className="text-foreground font-pixel text-[10px] tracking-wide">
           格子大小: {gridSize[0]} x {gridSize[0]}
         </Label>
         <div className="flex items-center gap-2">
@@ -151,7 +155,7 @@ export function ParameterControls({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="colorCount" className="text-foreground">颜色合并阈值: {colorCount[0]}</Label>
+        <Label htmlFor="colorCount" className="text-foreground font-pixel text-[10px] tracking-wide">颜色合并阈值: {colorCount[0]}</Label>
         <div className="flex items-center gap-2">
           <Slider
             id="colorCount"
@@ -185,7 +189,7 @@ export function ParameterControls({
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <Label htmlFor="showSymbols" className="text-foreground">显示符号</Label>
+          <Label htmlFor="showSymbols" className="text-foreground font-pixel text-[10px] tracking-wide">显示符号</Label>
           <input
             id="showSymbols"
             type="checkbox"
@@ -196,12 +200,23 @@ export function ParameterControls({
         </div>
 
         <div className="flex items-center justify-between">
-          <Label htmlFor="showGridLines" className="text-foreground">显示网格线</Label>
+          <Label htmlFor="showGridLines" className="text-foreground font-pixel text-[10px] tracking-wide">显示网格线</Label>
           <input
             id="showGridLines"
             type="checkbox"
             checked={showGridLines}
             onChange={(e) => setShowGridLines(e.target.checked)}
+            className="h-4 w-4 rounded border-border bg-background text-primary"
+          />
+        </div>
+
+        <div className="flex items-center justify-between">
+          <Label htmlFor="mirror" className="text-foreground font-pixel text-[10px] tracking-wide">左右镜像</Label>
+          <input
+            id="mirror"
+            type="checkbox"
+            checked={mirror}
+            onChange={(e) => setMirror(e.target.checked)}
             className="h-4 w-4 rounded border-border bg-background text-primary"
           />
         </div>
@@ -236,7 +251,7 @@ export function ActionButtons({
           onClick={onMakeBeads}
           disabled={beadLoading || cartoonLoading}
           variant="default"
-          className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground font-pixel text-[10px] tracking-wide flex-1"
         >
           <Grid3x3 className="mr-2 h-4 w-4" />
           {beadLoading ? '生成中...' : '转化为拼豆图'}
@@ -245,18 +260,18 @@ export function ActionButtons({
           onClick={onMakeCartoonBeads}
           disabled={beadLoading || cartoonLoading}
           variant="default"
-          className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1"
+          className="bg-primary hover:bg-primary/90 text-primary-foreground font-pixel text-[10px] tracking-wide flex-1"
         >
           <Sparkles className="mr-2 h-4 w-4" />
           {cartoonLoading ? '生成中...' : 'AI 生成动漫图'}
         </Button>
       </div>
       <div className="flex gap-2">
-        <Button onClick={onExport} disabled={exportDisabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1">
+        <Button onClick={onExport} disabled={exportDisabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground font-pixel text-[10px] tracking-wide flex-1">
           <Download className="mr-2 h-4 w-4" />
           导出图片
         </Button>
-        <Button onClick={onPrint} disabled={exportDisabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground flex-1">
+        <Button onClick={onPrint} disabled={exportDisabled} variant="default" className="bg-primary hover:bg-primary/90 text-primary-foreground font-pixel text-[10px] tracking-wide flex-1">
           <Printer className="mr-2 h-4 w-4" />
           打印图纸
         </Button>

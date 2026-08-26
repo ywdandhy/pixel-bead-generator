@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { RGB, rgbToHex } from '@/utils/imageProcessing';
+import { renderBeadCanvas } from '@/utils/beadRenderer';
 
 interface PixelGridProps {
   pixels: RGB[][];
@@ -7,6 +8,8 @@ interface PixelGridProps {
   showSymbols: boolean;
   showGridLines: boolean;
   cellSize?: number;
+  colorCounts?: Map<string, number>;
+  totalBeads?: number;
 }
 
 export function PixelGrid({
@@ -15,6 +18,8 @@ export function PixelGrid({
   showSymbols,
   showGridLines,
   cellSize = 20,
+  colorCounts,
+  totalBeads,
 }: PixelGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -22,54 +27,22 @@ export function PixelGrid({
   useEffect(() => {
     if (!canvasRef.current || pixels.length === 0) return;
 
+    // 用离屏 canvas 渲染(网格 + 图例),再画到 DOM canvas 上,避免逻辑重复
+    const offscreen = renderBeadCanvas(pixels, symbolMap, {
+      showSymbols,
+      showGridLines,
+      cellSize,
+      colorCounts,
+      totalBeads,
+    });
+
     const canvas = canvasRef.current;
+    canvas.width = offscreen.width;
+    canvas.height = offscreen.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
-    const height = pixels.length;
-    const width = pixels[0].length;
-
-    canvas.width = width * cellSize;
-    canvas.height = height * cellSize;
-
-    // 清空画布
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // 绘制格子
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const pixel = pixels[y][x];
-        const posX = x * cellSize;
-        const posY = y * cellSize;
-
-        // 填充颜色
-        ctx.fillStyle = `rgb(${pixel.r}, ${pixel.g}, ${pixel.b})`;
-        ctx.fillRect(posX, posY, cellSize, cellSize);
-
-        // 绘制网格线
-        if (showGridLines) {
-          ctx.strokeStyle = '#cccccc';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(posX, posY, cellSize, cellSize);
-        }
-
-        // 绘制符号（MARD 色号，2-3 字符）
-        if (showSymbols) {
-          const colorKey = `${pixel.r},${pixel.g},${pixel.b}`;
-          const symbol = symbolMap.get(colorKey) || '';
-          const len = symbol.length;
-          const fontSize = len <= 1 ? cellSize * 0.6 : len === 2 ? cellSize * 0.5 : cellSize * 0.4;
-
-          ctx.fillStyle = getContrastColor(pixel);
-          ctx.font = `${fontSize}px Arial`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(symbol, posX + cellSize / 2, posY + cellSize / 2);
-        }
-      }
-    }
-  }, [pixels, symbolMap, showSymbols, showGridLines, cellSize]);
+    ctx.drawImage(offscreen, 0, 0);
+  }, [pixels, symbolMap, showSymbols, showGridLines, cellSize, colorCounts, totalBeads]);
 
   const toggleFullscreen = () => {
     setIsFullscreen(!isFullscreen);
@@ -78,7 +51,7 @@ export function PixelGrid({
   return (
     <div className={`rounded-lg bg-white ${isFullscreen ? 'fixed inset-0 z-50' : ''}`}>
       <div className="flex justify-between items-center px-3 py-2 border-b" style={{ borderColor: 'hsl(var(--border))' }}>
-        <h3 className="text-xs font-medium" style={{ color: 'hsl(var(--muted-foreground))' }}>图纸预览</h3>
+        <h3 className="text-[10px] font-pixel tracking-wide" style={{ color: 'hsl(var(--muted-foreground))' }}>图纸预览</h3>
         <button
           onClick={toggleFullscreen}
           className="px-2 py-1 text-xs rounded"
@@ -91,7 +64,7 @@ export function PixelGrid({
         <canvas
           id="bead-canvas"
           ref={canvasRef}
-          className={`block ${isFullscreen ? 'h-full w-full object-contain' : ''}`}
+          className={`block ${isFullscreen ? 'h-full w-full object-contain' : 'max-w-full h-auto'}`}
         />
         {isFullscreen && (
           <button
@@ -105,12 +78,6 @@ export function PixelGrid({
       </div>
     </div>
   );
-}
-
-// 获取对比色（黑色或白色）
-function getContrastColor(rgb: RGB): string {
-  const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
-  return brightness > 128 ? '#000000' : '#ffffff';
 }
 
 interface ColorPaletteProps {
@@ -131,7 +98,7 @@ export function ColorPalette({ symbolMap, colorCounts, totalBeads }: ColorPalett
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold" style={{ color: 'hsl(var(--foreground))' }}>颜色图例 · MARD 221 色</h3>
+      <h3 className="text-xs font-pixel tracking-wide" style={{ color: 'hsl(var(--foreground))' }}>颜色图例 · MARD 221 色</h3>
       <div className="grid grid-cols-2 gap-2">
         {colors.map((color, idx) => {
           const pct = total > 0 ? (color.count / total) * 100 : 0;

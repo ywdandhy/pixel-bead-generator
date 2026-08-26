@@ -5,9 +5,10 @@ interface ImagePreviewModalProps {
   alt: string;
   onConfirm: () => void;
   onClose: () => void;
+  confirmLabel?: string;
 }
 
-export function ImagePreviewModal({ src, alt, onConfirm, onClose }: ImagePreviewModalProps) {
+export function ImagePreviewModal({ src, alt, onConfirm, onClose, confirmLabel = '生成拼豆图' }: ImagePreviewModalProps) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
 
@@ -63,7 +64,7 @@ export function ImagePreviewModal({ src, alt, onConfirm, onClose }: ImagePreview
             className="px-4 py-2 text-sm rounded-md text-white disabled:opacity-40"
             style={{ backgroundColor: '#5D4A47' }}
           >
-            生成拼豆图
+            {confirmLabel}
           </button>
         </div>
       </div>

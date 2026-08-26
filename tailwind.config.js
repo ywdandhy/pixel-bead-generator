@@ -4,10 +4,19 @@ export default {
     content: ["./index.html", "./src/**/*.{ts,tsx,js,jsx}"],
   theme: {
   	extend: {
+  		fontFamily: {
+  			pixel: ['"Press Start 2P"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+  		},
   		borderRadius: {
+  			'2xl': '0',
+  			xl: '0',
   			lg: 'var(--radius)',
   			md: 'calc(var(--radius) - 2px)',
   			sm: 'calc(var(--radius) - 4px)'
+  		},
+  		boxShadow: {
+  			'pixel': '4px 4px 0 rgba(0,0,0,0.25)',
+  			'pixel-sm': '2px 2px 0 rgba(0,0,0,0.2)',
   		},
   		colors: {
   			background: 'hsl(var(--background))',

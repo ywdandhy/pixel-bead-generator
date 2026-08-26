@@ -1,126 +1,398 @@
-import { useState, useMemo } from 'react';
-import { CATEGORIES, getGalleryImage } from '@/data/categories';
+import { useEffect, useMemo, useState } from 'react';
 import { ImagePreviewModal } from './ImagePreviewModal';
+import {
+  getAllGalleryEntries,
+  deleteGalleryEntry,
+  clearGallery,
+  saveGalleryEntry,
+  makeEntryId,
+  getImportedCuratedUrls,
+  markCuratedUrlImported,
+  clearImportedCuratedUrls,
+  type GalleryEntry,
+} from '@/utils/galleryStorage';
+import {
+  resizeImage,
+  imageDataToPixels,
+  mapPixelsToMardPalette,
+  countBeads,
+} from '@/utils/imageProcessing';
+import { renderBeadDataUrl } from '@/utils/beadRenderer';
+import { CURATED_CHARACTERS, type CuratedCharacter } from '@/data/curatedCharacters';
+import { BigThumb } from './GalleryCommon';
 
 interface BrowsePageProps {
-  onSelectImage: (src: string, alt: string) => void;
+  onSelectImage: (entry: GalleryEntry) => void;
+  refreshKey: number;
 }
 
-interface GalleryImage {
-  src: string;
-  alt: string;
-  index: number;
+type PreviewKind = 'original' | 'anime' | 'bead';
+
+// 标签分组顺序(未列出的标签会按字母序追加在末尾)。'我的上传' 不在图库,在「我的记录」页
+const CATEGORY_ORDER = ['奥特曼', '动漫', '王者荣耀', '英雄联盟', 'DOTA2', '童话', 'NBA', '明星', '运动', '爱豆'];
+
+// 批量导入默认参数(与 App.tsx 默认值一致:100×100 格,合并阈值 10,显示符号+网格线)
+const BATCH_GRID_SIZE = 100;
+const BATCH_COLOR_COUNT = 10;
+
+function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('图片加载失败'));
+    img.src = url;
+  });
 }
 
-export function BrowsePage({ onSelectImage }: BrowsePageProps) {
-  const [activeCategoryId, setActiveCategoryId] = useState(CATEGORIES[0].id);
-  const [preview, setPreview] = useState<GalleryImage | null>(null);
+function imageToJpegDataUrl(img: HTMLImageElement, maxDim = 1024, quality = 0.85): string {
+  const aspect = img.naturalWidth / img.naturalHeight;
+  let w = img.naturalWidth;
+  let h = img.naturalHeight;
+  if (w > maxDim || h > maxDim) {
+    if (w >= h) { w = maxDim; h = Math.max(1, Math.round(maxDim / aspect)); }
+    else { h = maxDim; w = Math.max(1, Math.round(maxDim * aspect)); }
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法获取 canvas context');
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', quality);
+}
 
-  const activeCategory = useMemo(
-    () => CATEGORIES.find((c) => c.id === activeCategoryId) ?? CATEGORIES[0],
-    [activeCategoryId]
-  );
+async function processCuratedToBead(img: HTMLImageElement): Promise<{ originalDataUrl: string; beadDataUrl: string }> {
+  const originalDataUrl = imageToJpegDataUrl(img);
+  const size = BATCH_GRID_SIZE;
+  const aspectRatio = img.naturalWidth / img.naturalHeight;
+  let targetWidth = size;
+  let targetHeight = Math.round(size / aspectRatio);
+  if (targetHeight > size) {
+    targetHeight = size;
+    targetWidth = Math.round(size * aspectRatio);
+  }
+  const imageData = resizeImage(img, targetWidth, targetHeight);
+  const pixels = imageDataToPixels(imageData);
+  const { pixels: mappedPixels, symbolMap } = mapPixelsToMardPalette(pixels, BATCH_COLOR_COUNT);
+  const { colorCounts, total } = countBeads(mappedPixels);
+  const beadDataUrl = renderBeadDataUrl(mappedPixels, symbolMap, {
+    showSymbols: true,
+    showGridLines: true,
+    cellSize: 24,
+    colorCounts,
+    totalBeads: total,
+  });
+  return { originalDataUrl, beadDataUrl };
+}
 
-  const images = useMemo<GalleryImage[]>(
-    () =>
-      Array.from({ length: activeCategory.images.length }, (_, i) => ({
-        src: getGalleryImage(activeCategory.id, i, 300),
-        alt: `${activeCategory.label} ${i + 1}`,
-        index: i,
-      })),
-    [activeCategory]
-  );
+export function BrowsePage({ onSelectImage, refreshKey }: BrowsePageProps) {
+  const [entries, setEntries] = useState<GalleryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ entry: GalleryEntry; kind: PreviewKind } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTag, setSelectedTag] = useState<string>('all');
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const all = await getAllGalleryEntries();
+      const filtered = all.filter(e => e.category !== '我的上传');
+      setEntries(filtered);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, [refreshKey]);
+
+  const searchedEntries = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return null;
+    return entries.filter(e => {
+      const name = (e.name || '').toLowerCase();
+      const cat = (e.category || '').toLowerCase();
+      const tags = (e.tags || []).join(' ').toLowerCase();
+      return name.includes(q) || cat.includes(q) || tags.includes(q);
+    });
+  }, [entries, searchQuery]);
+
+  // 按选中的标签筛选(搜索激活时忽略标签筛选)
+  const taggedEntries = useMemo(() => {
+    if (selectedTag === 'all') return entries;
+    return entries.filter(e => (e.category || '未分类') === selectedTag);
+  }, [entries, selectedTag]);
+
+  const displayedEntries = searchedEntries ?? taggedEntries;
+
+  // 可用标签列表(按 CATEGORY_ORDER 排序,带数量)
+  const tags = useMemo(() => {
+    const map = new Map<string, number>();
+    entries.forEach(e => {
+      const t = e.category || '未分类';
+      map.set(t, (map.get(t) || 0) + 1);
+    });
+    const present = [...map.entries()].map(([id, count]) => ({ id, label: id, count }));
+    present.sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a.id);
+      const bi = CATEGORY_ORDER.indexOf(b.id);
+      if (ai === -1 && bi === -1) return a.id.localeCompare(b.id);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    return present;
+  }, [entries]);
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteGalleryEntry(id);
+      window.location.reload();
+    } catch (e) {
+      alert(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!window.confirm('确定清空所有生成记录？此操作不可恢复。')) return;
+    try {
+      await clearGallery();
+      clearImportedCuratedUrls();
+      void load();
+    } catch (e) {
+      alert(`清空失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const [batchProgress, setBatchProgress] = useState<{
+    running: boolean;
+    done: number;
+    total: number;
+    current: string | null;
+    errors: string[];
+  }>({ running: false, done: 0, total: 0, current: null, errors: [] });
+
+  const runBatchImport = async (overrideList?: CuratedCharacter[]) => {
+    if (batchProgress.running) return;
+    const imported = getImportedCuratedUrls();
+    const list = overrideList ?? CURATED_CHARACTERS.filter(c => !imported.has(c.imageUrl));
+    if (list.length === 0) return;
+    const total = list.length;
+    setBatchProgress({ running: true, done: 0, total, current: null, errors: [] });
+    const errors: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const char = list[i];
+      setBatchProgress({ running: true, done: i, total, current: char.name, errors: [...errors] });
+      try {
+        const img = await loadImageFromUrl(char.imageUrl);
+        const { originalDataUrl, beadDataUrl } = await processCuratedToBead(img);
+        await saveGalleryEntry({
+          id: makeEntryId(),
+          createdAt: Date.now(),
+          category: char.category,
+          name: char.name,
+          tags: char.tags ?? [],
+          original: originalDataUrl,
+          anime: null,
+          bead: beadDataUrl,
+        });
+        markCuratedUrlImported(char.imageUrl);
+      } catch (e) {
+        errors.push(`${char.name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    setBatchProgress({ running: false, done: total, total, current: null, errors });
+    void load();
+  };
+
+  // 进入浏览页时自动导入精选清单里未导入的角色(只跑一次)
+  useEffect(() => {
+    const imported = getImportedCuratedUrls();
+    const pending = CURATED_CHARACTERS.filter(c => !imported.has(c.imageUrl));
+    if (pending.length === 0) return;
+    void runBatchImport(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const previewSrc = preview
+    ? preview.kind === 'original'
+      ? preview.entry.original
+      : preview.kind === 'anime'
+        ? preview.entry.anime
+        : preview.entry.bead
+    : null;
 
   return (
-    <div className="grid lg:grid-cols-[200px_1fr] gap-6">
-      {/* 左侧分类 */}
-      <aside className={`${'card'} p-3`}>
-        <h2 className="text-sm font-semibold mb-3" style={{ color: 'hsl(var(--foreground))' }}>分类</h2>
-        <div className="flex flex-col gap-1">
-          {CATEGORIES.map((cat) => (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 flex-wrap border-2 rounded-none p-3 shadow-pixel-sm" style={{ borderColor: '#3A2A24', backgroundColor: '#FAF7F0' }}>
+        <button
+          onClick={() => void runBatchImport()}
+          disabled={batchProgress.running}
+          className="px-3 py-1.5 text-[10px] font-pixel tracking-wide border-2 rounded-none disabled:opacity-50"
+          style={{ borderColor: '#3A2A24', backgroundColor: '#5D4A47', color: '#FFF8EE' }}
+        >
+          {batchProgress.running ? '处理中...' : '批量导入精选'}
+        </button>
+        {batchProgress.running && (
+          <span className="text-[10px] font-pixel tracking-wide" style={{ color: 'hsl(var(--foreground))' }}>
+            {batchProgress.done}/{batchProgress.total} · {batchProgress.current}
+          </span>
+        )}
+        {!batchProgress.running && batchProgress.done > 0 && (
+          <span className="text-[10px] font-pixel tracking-wide" style={{ color: batchProgress.errors.length ? 'hsl(var(--destructive))' : 'hsl(var(--foreground))' }}>
+            完成 · 成功 {batchProgress.done - batchProgress.errors.length}/{batchProgress.total}{batchProgress.errors.length ? ` · 失败 ${batchProgress.errors.length}` : ''}
+          </span>
+        )}
+        {entries.length > 0 && (
+          <button
+            onClick={handleClearAll}
+            className="px-3 py-1 text-[10px] font-pixel tracking-wide border-2 rounded-none"
+            style={{ borderColor: 'hsl(var(--destructive))', color: 'hsl(var(--destructive))' }}
+          >
+            清空
+          </button>
+        )}
+        <span className="text-[10px] ml-auto" style={{ color: 'hsl(var(--muted-foreground))' }}>
+          精选清单共 {CURATED_CHARACTERS.length} 张 · 图库已存 {entries.length} 张
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 border-2 rounded-none p-2 shadow-pixel-sm" style={{ borderColor: '#3A2A24', backgroundColor: '#FAF7F0' }}>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="搜索角色名 / 标签..."
+          className="flex-1 px-3 py-1.5 text-xs bg-transparent outline-none"
+          style={{ color: 'hsl(var(--foreground))' }}
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="px-2 py-1 text-[10px] font-pixel tracking-wide"
+            style={{ color: 'hsl(var(--muted-foreground))' }}
+          >
+            清除
+          </button>
+        )}
+        <span className="text-[10px] font-mono px-2" style={{ color: 'hsl(var(--muted-foreground))' }}>
+          {searchedEntries ? `${searchedEntries.length} 个匹配` : `${displayedEntries.length} 条`}
+        </span>
+      </div>
+
+      {/* 标签筛选栏(顶部横向按钮) */}
+      {!loading && !error && entries.length > 0 && !searchedEntries && (
+        <div className="flex items-center gap-2 flex-wrap border-2 rounded-none p-2 shadow-pixel-sm" style={{ borderColor: '#3A2A24', backgroundColor: '#FAF7F0' }}>
+          <button
+            onClick={() => setSelectedTag('all')}
+            className="px-3 py-1 text-[10px] font-pixel tracking-wide border-2 rounded-none"
+            style={{
+              borderColor: selectedTag === 'all' ? '#3A2A24' : 'transparent',
+              backgroundColor: selectedTag === 'all' ? '#5D4A47' : 'transparent',
+              color: selectedTag === 'all' ? '#FFF8EE' : 'hsl(var(--foreground))',
+            }}
+          >
+            全部 ({entries.length})
+          </button>
+          {tags.map(t => (
             <button
-              key={cat.id}
-              onClick={() => setActiveCategoryId(cat.id)}
-              className="text-left px-3 py-2 rounded-md text-sm transition-colors"
+              key={t.id}
+              onClick={() => setSelectedTag(t.id)}
+              className="px-3 py-1 text-[10px] font-pixel tracking-wide border-2 rounded-none"
               style={{
-                backgroundColor: cat.id === activeCategoryId ? '#5D4A47' : 'transparent',
-                color: cat.id === activeCategoryId ? '#fff' : 'hsl(var(--foreground))',
+                borderColor: selectedTag === t.id ? '#3A2A24' : 'transparent',
+                backgroundColor: selectedTag === t.id ? '#5D4A47' : 'transparent',
+                color: selectedTag === t.id ? '#FFF8EE' : 'hsl(var(--foreground))',
               }}
             >
-              {cat.label}
+              {t.label} ({t.count})
             </button>
           ))}
         </div>
-      </aside>
+      )}
 
-      {/* 右侧图库 */}
-      <div>
-        <h2 className="text-base font-semibold mb-4" style={{ color: 'hsl(var(--foreground))' }}>
-          {activeCategory.label}
-        </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {images.map((img) => (
-            <GalleryItem
-              key={`${activeCategoryId}-${img.index}`}
-              img={img}
-              onClick={() => setPreview(img)}
-            />
+      {loading && (
+        <div className="text-center py-12 text-xs" style={{ color: 'hsl(var(--muted-foreground))' }}>加载中...</div>
+      )}
+
+      {error && (
+        <div className="text-center py-12 text-xs" style={{ color: 'hsl(var(--destructive))' }}>
+          加载失败：{error}
+        </div>
+      )}
+
+      {!loading && !error && displayedEntries.length === 0 && (
+        <div className="text-center py-12 text-xs px-6" style={{ color: 'hsl(var(--muted-foreground))' }}>
+          {entries.length === 0
+            ? '图库为空。点击顶部「批量导入精选」可自动抓取各品类角色图。'
+            : (searchedEntries ? '无匹配记录。' : '该标签下暂无记录。')}
+        </div>
+      )}
+
+      {/* 平铺卡片网格(按标签筛选 + 搜索) */}
+      {!loading && !error && displayedEntries.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {displayedEntries.map(entry => (
+            <div
+              key={entry.id}
+              className="border-2 rounded-none p-2 shadow-pixel-sm"
+              style={{ borderColor: '#3A2A24', backgroundColor: '#FAF7F0' }}
+            >
+              <div className="flex items-center justify-between mb-2 px-1">
+                <div className="text-[10px] font-pixel tracking-wide truncate" style={{ color: 'hsl(var(--foreground))' }}>
+                  {entry.name || '未命名'}
+                </div>
+                <button
+                  onClick={() => handleDelete(entry.id)}
+                  className="text-[10px] font-pixel tracking-wide shrink-0 ml-2"
+                  style={{ color: 'hsl(var(--destructive))' }}
+                >
+                  删除
+                </button>
+              </div>
+              <div className={`grid ${entry.anime ? 'grid-cols-3' : 'grid-cols-2'} gap-1`}>
+                <BigThumb
+                  label="原图"
+                  src={entry.original}
+                  baseFilename={entry.name || 'image'}
+                  onClick={() => setPreview({ entry, kind: 'original' })}
+                />
+                {entry.anime && (
+                  <BigThumb
+                    label="动漫图"
+                    src={entry.anime}
+                    baseFilename={entry.name || 'image'}
+                    onClick={() => setPreview({ entry, kind: 'anime' })}
+                  />
+                )}
+                <BigThumb
+                  label="拼豆图"
+                  src={entry.bead}
+                  baseFilename={entry.name || 'image'}
+                  onClick={() => setPreview({ entry, kind: 'bead' })}
+                />
+              </div>
+            </div>
           ))}
         </div>
-      </div>
+      )}
 
-      {preview && (
+      {preview && previewSrc && (
         <ImagePreviewModal
-          src={getGalleryImage(activeCategory.id, preview.index, 600)}
-          alt={preview.alt}
+          src={previewSrc}
+          alt={preview.kind}
+          confirmLabel="加载到生成器"
           onConfirm={() => {
-            onSelectImage(
-              getGalleryImage(activeCategory.id, preview.index, 600),
-              preview.alt
-            );
+            onSelectImage(preview.entry);
             setPreview(null);
           }}
           onClose={() => setPreview(null)}
         />
       )}
     </div>
-  );
-}
-
-interface GalleryItemProps {
-  img: GalleryImage;
-  onClick: () => void;
-}
-
-function GalleryItem({ img, onClick }: GalleryItemProps) {
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
-
-  return (
-    <button
-      onClick={onClick}
-      className="relative aspect-square rounded-lg overflow-hidden"
-      style={{ backgroundColor: '#FAF7F0' }}
-    >
-      {!loaded && !error && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2" style={{ borderColor: '#5D4A47' }}></div>
-        </div>
-      )}
-      {error && (
-        <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground p-2 text-center">
-          加载失败
-        </div>
-      )}
-      <img
-        src={img.src}
-        alt={img.alt}
-        crossOrigin="anonymous"
-        onLoad={() => setLoaded(true)}
-        onError={() => setError(true)}
-        className="w-full h-full object-cover transition-opacity"
-        style={{ opacity: loaded && !error ? 1 : 0 }}
-      />
-    </button>
   );
 }
