@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePreviewModal } from './ImagePreviewModal';
 import {
   getAllGalleryEntries,
@@ -29,11 +29,12 @@ interface BrowsePageProps {
 type PreviewKind = 'original' | 'anime' | 'bead';
 
 // 标签分组顺序(未列出的标签会按字母序追加在末尾)。'我的上传' 不在图库,在「我的记录」页
-const CATEGORY_ORDER = ['奥特曼', '动漫', '王者荣耀', '英雄联盟', 'DOTA2', '童话', 'NBA', '明星', '运动', '爱豆'];
+const CATEGORY_ORDER = ['奥特曼', '动漫', '王者荣耀', '英雄联盟', 'DOTA2', '童话', 'NBA', '明星', '运动', '爱豆', '汽车'];
 
 // 批量导入默认参数(与 App.tsx 默认值一致:100×100 格,合并阈值 10,显示符号+网格线)
 const BATCH_GRID_SIZE = 100;
 const BATCH_COLOR_COUNT = 10;
+const BATCH_MAX_COLORS = 0;
 
 function loadImageFromUrl(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -74,7 +75,7 @@ async function processCuratedToBead(img: HTMLImageElement): Promise<{ originalDa
   }
   const imageData = resizeImage(img, targetWidth, targetHeight);
   const pixels = imageDataToPixels(imageData);
-  const { pixels: mappedPixels, symbolMap } = mapPixelsToMardPalette(pixels, BATCH_COLOR_COUNT);
+  const { pixels: mappedPixels, symbolMap } = mapPixelsToMardPalette(pixels, BATCH_COLOR_COUNT, BATCH_MAX_COLORS);
   const { colorCounts, total } = countBeads(mappedPixels);
   const beadDataUrl = renderBeadDataUrl(mappedPixels, symbolMap, {
     showSymbols: true,
@@ -93,6 +94,7 @@ export function BrowsePage({ onSelectImage, refreshKey }: BrowsePageProps) {
   const [preview, setPreview] = useState<{ entry: GalleryEntry; kind: PreviewKind } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string>('all');
+  const [visibleCount, setVisibleCount] = useState(24);
 
   const load = async () => {
     setLoading(true);
@@ -148,10 +150,35 @@ export function BrowsePage({ onSelectImage, refreshKey }: BrowsePageProps) {
     return present;
   }, [entries]);
 
+  const visibleEntries = displayedEntries.slice(0, visibleCount);
+  const hasMore = displayedEntries.length > visibleCount;
+
+  // 标签或搜索变化时重置分页
+  useEffect(() => {
+    setVisibleCount(24);
+  }, [selectedTag, searchQuery]);
+
+  // 下拉自动分页:IntersectionObserver 监测哨兵元素
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMore) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        setVisibleCount(c => c + 24);
+      }
+    }, { rootMargin: '400px' });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore]);
+
   const handleDelete = async (id: string) => {
     try {
       await deleteGalleryEntry(id);
-      window.location.reload();
+      // 轻量刷新:只重新拉取条目,不动 loading 状态(避免闪烁),不刷新页面
+      const all = await getAllGalleryEntries();
+      setEntries(all.filter(e => e.category !== '我的上传'));
     } catch (e) {
       alert(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -333,52 +360,57 @@ export function BrowsePage({ onSelectImage, refreshKey }: BrowsePageProps) {
         </div>
       )}
 
-      {/* 平铺卡片网格(按标签筛选 + 搜索) */}
+      {/* 平铺卡片网格(按标签筛选 + 搜索,分页加载) */}
       {!loading && !error && displayedEntries.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {displayedEntries.map(entry => (
-            <div
-              key={entry.id}
-              className="border-2 rounded-none p-2 shadow-pixel-sm"
-              style={{ borderColor: '#3A2A24', backgroundColor: '#FAF7F0' }}
-            >
-              <div className="flex items-center justify-between mb-2 px-1">
-                <div className="text-[10px] font-pixel tracking-wide truncate" style={{ color: 'hsl(var(--foreground))' }}>
-                  {entry.name || '未命名'}
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {visibleEntries.map(entry => (
+              <div
+                key={entry.id}
+                className="border-2 rounded-none p-2 shadow-pixel-sm"
+                style={{ borderColor: '#3A2A24', backgroundColor: '#FAF7F0' }}
+              >
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <div className="text-[10px] font-pixel tracking-wide truncate" style={{ color: 'hsl(var(--foreground))' }}>
+                    {entry.name || '未命名'}
+                  </div>
+                  <button
+                    onClick={() => handleDelete(entry.id)}
+                    className="text-[10px] font-pixel tracking-wide shrink-0 ml-2"
+                    style={{ color: 'hsl(var(--destructive))' }}
+                  >
+                    删除
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleDelete(entry.id)}
-                  className="text-[10px] font-pixel tracking-wide shrink-0 ml-2"
-                  style={{ color: 'hsl(var(--destructive))' }}
-                >
-                  删除
-                </button>
-              </div>
-              <div className={`grid ${entry.anime ? 'grid-cols-3' : 'grid-cols-2'} gap-1`}>
-                <BigThumb
-                  label="原图"
-                  src={entry.original}
-                  baseFilename={entry.name || 'image'}
-                  onClick={() => setPreview({ entry, kind: 'original' })}
-                />
-                {entry.anime && (
+                <div className={`grid ${entry.anime ? 'grid-cols-3' : 'grid-cols-2'} gap-1`}>
                   <BigThumb
-                    label="动漫图"
-                    src={entry.anime}
+                    label="原图"
+                    src={entry.original}
                     baseFilename={entry.name || 'image'}
-                    onClick={() => setPreview({ entry, kind: 'anime' })}
+                    onClick={() => setPreview({ entry, kind: 'original' })}
                   />
-                )}
-                <BigThumb
-                  label="拼豆图"
-                  src={entry.bead}
-                  baseFilename={entry.name || 'image'}
-                  onClick={() => setPreview({ entry, kind: 'bead' })}
-                />
+                  {entry.anime && (
+                    <BigThumb
+                      label="动漫图"
+                      src={entry.anime}
+                      baseFilename={entry.name || 'image'}
+                      onClick={() => setPreview({ entry, kind: 'anime' })}
+                    />
+                  )}
+                  <BigThumb
+                    label="拼豆图"
+                    src={entry.bead}
+                    baseFilename={entry.name || 'image'}
+                    onClick={() => setPreview({ entry, kind: 'bead' })}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+          {hasMore && (
+            <div ref={sentinelRef} className="h-4" />
+          )}
+        </>
       )}
 
       {preview && previewSrc && (

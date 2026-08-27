@@ -50,7 +50,8 @@ export function imageDataToPixels(imageData: ImageData): RGB[][] {
 // mergeThreshold：颜色颗数少于阈值的，合并到最近邻的"够数"颜色，避免零碎单像素色污染色卡。
 export function mapPixelsToMardPalette(
   pixels: RGB[][],
-  mergeThreshold = 5
+  mergeThreshold = 5,
+  maxColors = 0
 ): { pixels: RGB[][]; symbolMap: Map<string, string> } {
   const h = pixels.length;
   const w = pixels[0]?.length ?? 0;
@@ -120,6 +121,50 @@ export function mapPixelsToMardPalette(
         idxRow[x] = newIdx;
         const c = MARD_RGB[newIdx];
         mappedRow[x] = { r: c.r, g: c.g, b: c.b };
+      }
+    }
+  }
+
+  // 3.5 色号上限:如果 maxColors > 0 且 distinct 色 > maxColors,
+  //     保留 count 最多的 maxColors 个,其余合并到最近邻的保留色
+  if (maxColors > 0) {
+    const counts2 = new Int32Array(N);
+    for (let y = 0; y < h; y++) {
+      const row = idxIndex[y];
+      for (let x = 0; x < w; x++) counts2[row[x]]++;
+    }
+    const present: number[] = [];
+    for (let i = 0; i < N; i++) if (counts2[i] > 0) present.push(i);
+    present.sort((a, b) => counts2[b] - counts2[a]);
+    if (present.length > maxColors) {
+      const keptList = present.slice(0, maxColors);
+      const keptSet = new Set(keptList);
+      const remap2 = new Int16Array(N);
+      for (let i = 0; i < N; i++) remap2[i] = i;
+      for (let i = 0; i < N; i++) {
+        if (counts2[i] === 0 || keptSet.has(i)) continue;
+        const src = MARD_RGB[i];
+        let bestJ = keptList[0];
+        let bestDist = Infinity;
+        for (const j of keptList) {
+          const tgt = MARD_RGB[j];
+          const dr = src.r - tgt.r;
+          const dg = src.g - tgt.g;
+          const db = src.b - tgt.b;
+          const d = dr * dr + dg * dg + db * db;
+          if (d < bestDist) { bestDist = d; bestJ = j; }
+        }
+        remap2[i] = bestJ;
+      }
+      for (let y = 0; y < h; y++) {
+        const idxRow = idxIndex[y];
+        const mappedRow = mapped[y];
+        for (let x = 0; x < w; x++) {
+          const newIdx = remap2[idxRow[x]];
+          idxRow[x] = newIdx;
+          const c = MARD_RGB[newIdx];
+          mappedRow[x] = { r: c.r, g: c.g, b: c.b };
+        }
       }
     }
   }

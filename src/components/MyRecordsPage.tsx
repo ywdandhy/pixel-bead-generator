@@ -1,7 +1,7 @@
 // 「我的记录」页:专门展示用户自己上传生成的记录(category === '我的上传')
 // 与 BrowsePage(图库,精选角色)分开,布局简化:平铺卡片,无标签 sidebar
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePreviewModal } from './ImagePreviewModal';
 import {
   getAllGalleryEntries,
@@ -23,6 +23,7 @@ export function MyRecordsPage({ refreshKey, onSelectImage }: MyRecordsPageProps)
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [preview, setPreview] = useState<{ entry: GalleryEntry; kind: PreviewKind } | null>(null);
+  const [visibleCount, setVisibleCount] = useState(24);
 
   const load = async () => {
     setLoading(true);
@@ -49,10 +50,33 @@ export function MyRecordsPage({ refreshKey, onSelectImage }: MyRecordsPageProps)
     });
   }, [entries, searchQuery]);
 
+  const visibleEntries = filtered.slice(0, visibleCount);
+  const hasMore = filtered.length > visibleCount;
+
+  useEffect(() => {
+    setVisibleCount(24);
+  }, [searchQuery]);
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!hasMore) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) {
+        setVisibleCount(c => c + 24);
+      }
+    }, { rootMargin: '400px' });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore]);
+
   const handleDelete = async (id: string) => {
     try {
       await deleteGalleryEntry(id);
-      window.location.reload();
+      // 轻量刷新:只重新拉取条目,不动 loading 状态,不刷新页面
+      const all = await getAllGalleryEntries();
+      setEntries(all.filter(e => e.category === '我的上传'));
     } catch (e) {
       alert(`删除失败: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -134,7 +158,7 @@ export function MyRecordsPage({ refreshKey, onSelectImage }: MyRecordsPageProps)
 
       {!loading && !error && filtered.length > 0 && (
         <div className="space-y-4">
-          {filtered.map((entry) => (
+          {visibleEntries.map((entry) => (
             <div
               key={entry.id}
               className="border-2 rounded-none p-3 shadow-pixel-sm"
@@ -181,6 +205,9 @@ export function MyRecordsPage({ refreshKey, onSelectImage }: MyRecordsPageProps)
               </div>
             </div>
           ))}
+          {hasMore && (
+            <div ref={sentinelRef} className="h-4" />
+          )}
         </div>
       )}
 

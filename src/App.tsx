@@ -12,6 +12,7 @@ import {
   type RGB,
 } from './utils/imageProcessing';
 import { cartoonifyWithDoubao } from './utils/doubaoCartoonify';
+import { getCartoonCountToday, getCartoonRemainingToday, incrementCartoonCount, CARTOON_DAILY_LIMIT } from './utils/dailyLimit';
 import { renderBeadDataUrl } from './utils/beadRenderer';
 import { saveGalleryEntry, makeEntryId, type GalleryEntry } from './utils/galleryStorage';
 
@@ -29,6 +30,7 @@ function App() {
   } | null>(null);
   const [gridSize, setGridSize] = useState<[number]>([100]);
   const [colorCount, setColorCount] = useState<[number]>([10]);
+  const [maxColors, setMaxColors] = useState<[number]>([0]);
   const [showSymbols, setShowSymbols] = useState(true);
   const [showGridLines, setShowGridLines] = useState(true);
   const [mirror, setMirror] = useState(false);
@@ -38,6 +40,7 @@ function App() {
   const [beadSource, setBeadSource] = useState<BeadSource>(null);
   const [activeTab, setActiveTab] = useState<Tab>('generator');
   const [galleryVersion, setGalleryVersion] = useState(0);
+  const [cartoonRemaining, setCartoonRemaining] = useState(getCartoonRemainingToday());
 
   const processImage = useCallback(async (
     image: HTMLImageElement,
@@ -45,6 +48,7 @@ function App() {
     mergeThreshold: number,
     mirror: boolean,
     captureBead = false,
+    maxColors = 0,
   ): Promise<string | null> => {
     setIsProcessing(true);
     await new Promise(r => setTimeout(r, 0));
@@ -58,7 +62,7 @@ function App() {
       }
       const imageData = resizeImage(image, targetWidth, targetHeight);
       const pixels = imageDataToPixels(imageData);
-      const { pixels: mappedPixels, symbolMap } = mapPixelsToMardPalette(pixels, mergeThreshold);
+      const { pixels: mappedPixels, symbolMap } = mapPixelsToMardPalette(pixels, mergeThreshold, maxColors);
       const finalPixels = mirror ? mappedPixels.map(row => [...row].reverse()) : mappedPixels;
       const { colorCounts, total } = countBeads(finalPixels);
       setPixelData({ pixels: finalPixels, symbolMap, colorCounts, totalBeads: total });
@@ -90,21 +94,28 @@ function App() {
   const handleGridSizeChange = (value: [number]) => {
     setGridSize(value);
     if (beadSourceImage) {
-      void processImage(beadSourceImage, value[0], colorCount[0], mirror);
+      void processImage(beadSourceImage, value[0], colorCount[0], mirror, false, maxColors[0]);
     }
   };
 
   const handleColorCountChange = (value: [number]) => {
     setColorCount(value);
     if (beadSourceImage) {
-      void processImage(beadSourceImage, gridSize[0], value[0], mirror);
+      void processImage(beadSourceImage, gridSize[0], value[0], mirror, false, maxColors[0]);
+    }
+  };
+
+  const handleMaxColorsChange = (value: [number]) => {
+    setMaxColors(value);
+    if (beadSourceImage) {
+      void processImage(beadSourceImage, gridSize[0], colorCount[0], mirror, false, value[0]);
     }
   };
 
   const handleMirrorChange = (value: boolean) => {
     setMirror(value);
     if (beadSourceImage) {
-      void processImage(beadSourceImage, gridSize[0], colorCount[0], value);
+      void processImage(beadSourceImage, gridSize[0], colorCount[0], value, false, maxColors[0]);
     }
   };
 
@@ -114,7 +125,7 @@ function App() {
     setCartoonDataUrl(null);
     setBeadSource('original');
     try {
-      const beadDataUrl = await processImage(originalImage, gridSize[0], colorCount[0], mirror, true);
+      const beadDataUrl = await processImage(originalImage, gridSize[0], colorCount[0], mirror, true, maxColors[0]);
       if (beadDataUrl) {
         await saveGalleryEntry({
           id: makeEntryId(),
@@ -135,14 +146,23 @@ function App() {
 
   const handleMakeCartoonBeads = async () => {
     if (!originalImage) return;
+    // 每日次数限制
+    const used = getCartoonCountToday();
+    if (used >= CARTOON_DAILY_LIMIT) {
+      alert(`今日动漫图生成已达上限(${CARTOON_DAILY_LIMIT}次),明天重置`);
+      return;
+    }
     setIsCartooning(true);
     try {
       const dataUrl = await cartoonifyWithDoubao(originalImage);
+      // 成功后计数 +1
+      incrementCartoonCount();
+      setCartoonRemaining(getCartoonRemainingToday());
       setCartoonDataUrl(dataUrl);
       const cartoonImg = await loadImageFromDataUrl(dataUrl);
       setBeadSourceImage(cartoonImg);
       setBeadSource('cartoon');
-      const beadDataUrl = await processImage(cartoonImg, gridSize[0], colorCount[0], mirror, true);
+      const beadDataUrl = await processImage(cartoonImg, gridSize[0], colorCount[0], mirror, true, maxColors[0]);
       if (beadDataUrl) {
         await saveGalleryEntry({
           id: makeEntryId(),
@@ -278,6 +298,8 @@ function App() {
                     setGridSize={handleGridSizeChange}
                     colorCount={colorCount}
                     setColorCount={handleColorCountChange}
+                    maxColors={maxColors}
+                    setMaxColors={handleMaxColorsChange}
                     showSymbols={showSymbols}
                     setShowSymbols={setShowSymbols}
                     showGridLines={showGridLines}
@@ -300,6 +322,9 @@ function App() {
                   />
                   <p className="text-xs mt-3" style={{ color: 'hsl(var(--muted-foreground))' }}>
                     选择"转化为拼豆图"直接生成图纸；选择"AI 生成动漫图"调用豆包 Seedream 5.0 Pro 生成动漫图再生成图纸。两种方式均会保存原图+动漫图+拼豆图三张到图片库（原图直转无动漫图）。
+                  </p>
+                  <p className="text-xs mt-1" style={{ color: cartoonRemaining > 0 ? 'hsl(var(--muted-foreground))' : 'hsl(var(--destructive))' }}>
+                    今日动漫图剩余: {cartoonRemaining}/{CARTOON_DAILY_LIMIT}（每天 0 点重置）
                   </p>
                 </div>
               </>

@@ -97,6 +97,8 @@ interface ParameterControlsProps {
   setGridSize: (value: [number]) => void;
   colorCount: [number];
   setColorCount: (value: [number]) => void;
+  maxColors: [number];
+  setMaxColors: (value: [number]) => void;
   showSymbols: boolean;
   setShowSymbols: (value: boolean) => void;
   showGridLines: boolean;
@@ -110,6 +112,8 @@ export function ParameterControls({
   setGridSize,
   colorCount,
   setColorCount,
+  maxColors,
+  setMaxColors,
   showSymbols,
   setShowSymbols,
   showGridLines,
@@ -184,6 +188,41 @@ export function ParameterControls({
         </div>
         <p className="text-xs text-muted-foreground">
           像素数少于阈值的颜色会合并到最近邻 MARD 色，避免单像素色污染色卡（调色板为 MARD 221 色固定）
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="maxColors" className="text-foreground font-pixel text-[10px] tracking-wide">
+          色号上限: {maxColors[0] === 0 ? '不限' : maxColors[0]}
+        </Label>
+        <div className="flex items-center gap-2">
+          <Slider
+            id="maxColors"
+            min={0}
+            max={64}
+            step={1}
+            value={maxColors}
+            onValueChange={setMaxColors}
+            className="flex-1"
+          />
+          <input
+            type="number"
+            id="maxColorsInput"
+            min={0}
+            max={64}
+            step={1}
+            value={maxColors[0]}
+            onChange={(e) => {
+              const value = parseInt(e.target.value) || 0;
+              if (!isNaN(value) && value >= 0 && value <= 64) {
+                setMaxColors([value]);
+              }
+            }}
+            className="w-16 px-2 py-1 border rounded text-sm border-border bg-background text-foreground"
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          限制拼豆图使用的最多色号数（0=不限）。超出部分按数量从少到多合并到最近邻保留色
         </p>
       </div>
 

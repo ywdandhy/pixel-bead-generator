@@ -54,7 +54,7 @@ export function BigThumb({ label, src, placeholder, baseFilename, onClick }: Big
         className="relative aspect-square w-full block disabled:cursor-default"
       >
         {src ? (
-          <img src={src} alt={label} className="w-full h-full object-contain" />
+          <img src={src} alt={label} loading="lazy" className="w-full h-full object-contain" />
         ) : (
           <div
             className="absolute inset-0 flex items-center justify-center text-[11px] font-pixel tracking-wide text-center px-3 leading-relaxed"

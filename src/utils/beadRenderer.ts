@@ -1,5 +1,5 @@
 // 离屏 canvas 渲染拼豆图,用于保存到图库(不依赖 PixelGrid 的 DOM canvas)。
-// 可选 colorCounts + totalBeads 时,在网格下方追加图例(颜色 + 符号 + 数量)。
+// 顶部加"逗豆乐拼馆"logo 标题头,网格中央加对角线水印,可选 colorCounts + totalBeads 时下方追加图例。
 import type { RGB } from './imageProcessing';
 
 export interface BeadRenderOptions {
@@ -9,6 +9,17 @@ export interface BeadRenderOptions {
   colorCounts?: Map<string, number>;
   totalBeads?: number;
 }
+
+const BRAND = '逗豆乐拼馆';
+const HEADER_H = 64;
+const LOGO_PATH = '/logo.png';
+
+// 预加载 logo 图片(模块级,首次 import 就开始加载)
+let logoImg: HTMLImageElement | null = null;
+const logoLoader = new Image();
+logoLoader.onload = () => { logoImg = logoLoader; };
+logoLoader.onerror = () => { logoImg = null; };
+logoLoader.src = LOGO_PATH;
 
 // 图例单格尺寸(固定,与网格 cellSize 解耦)
 const LEGEND_PADDING = 16;
@@ -45,19 +56,39 @@ export function renderBeadCanvas(
 
   const canvas = document.createElement('canvas');
   canvas.width = gridW;
-  canvas.height = gridH + legendH;
+  canvas.height = HEADER_H + gridH + legendH;
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 网格
+  // 顶部标题头:逗豆乐拼馆 logo(图片优先,未加载完则用文字 fallback)
+  ctx.fillStyle = '#5D4A47';
+  ctx.fillRect(0, 0, gridW, HEADER_H);
+  if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
+    // 绘制 logo 图片,等比缩放到 header 高度,居中
+    const logoH = HEADER_H - 12;
+    const logoW = (logoImg.naturalWidth / logoImg.naturalHeight) * logoH;
+    const logoX = (gridW - logoW) / 2;
+    const logoY = 6;
+    ctx.drawImage(logoImg, logoX, logoY, logoW, logoH);
+  } else {
+    // fallback:纯文字 logo
+    ctx.fillStyle = '#FFF8EE';
+    ctx.font = `bold 30px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(BRAND, gridW / 2, HEADER_H / 2);
+  }
+
+  // 网格(偏移 HEADER_H)
+  const gridOffsetY = HEADER_H;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const pixel = pixels[y][x];
       const posX = x * cellSize;
-      const posY = y * cellSize;
+      const posY = gridOffsetY + y * cellSize;
 
       ctx.fillStyle = `rgb(${pixel.r}, ${pixel.g}, ${pixel.b})`;
       ctx.fillRect(posX, posY, cellSize, cellSize);
@@ -82,9 +113,25 @@ export function renderBeadCanvas(
     }
   }
 
+  // 对角线水印:逗豆乐拼馆(半透明,覆盖网格中央)
+  ctx.save();
+  ctx.translate(gridW / 2, gridOffsetY + gridH / 2);
+  ctx.rotate(-Math.PI / 6);
+  const wmFontSize = Math.max(80, Math.min(gridW, gridH) / 5);
+  ctx.font = `bold ${wmFontSize}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // 描边 + 填充,双重水印效果
+  ctx.strokeStyle = 'rgba(93, 74, 71, 0.10)';
+  ctx.lineWidth = 4;
+  ctx.strokeText(BRAND, 0, 0);
+  ctx.fillStyle = 'rgba(93, 74, 71, 0.06)';
+  ctx.fillText(BRAND, 0, 0);
+  ctx.restore();
+
   // 图例区(网格下方)
   if (colorCounts && legendColors.length > 0) {
-    const legendStartY = gridH;
+    const legendStartY = gridOffsetY + gridH;
 
     // 分隔线
     ctx.strokeStyle = '#3A2A24';
